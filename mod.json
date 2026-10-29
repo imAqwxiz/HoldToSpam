@@ -1,9 +1,14 @@
-"geode": "v5.10.1",
-"gd": {
-    "android": "*"
-},
-"id": "aqwxiz.holdtospam",
-"name": "HoldToSpam",
-"version": "v1.0.0",
-"developer": "aqwxiz",
-"description": "Customizable gameplay spam settings for Geometry Dash."
+{
+    "geode": "v5.10.1",
+    "gd": {
+        "android": "*"
+    },
+    "id": "aqwxiz.holdtospam",
+    "name": "HoldToSpam",
+    "version": "v1.0.0",
+    "developer": "aqwxiz",
+    "description": "Customizable gameplay spam settings for Geometry Dash.",
+    "dependencies": {
+        "geode.node-ids": ">=v1.23.3"
+    }
+}
