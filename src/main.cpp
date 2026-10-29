@@ -1,100 +1,102 @@
-/**
- * Include the Geode headers.
- */
-#include <Geode/Geode.hpp>
 
-/**
- * Brings cocos2d and all Geode namespaces to the current scope.
- */
+#include <Geode/Geode.hpp>
+#include <Geode/modify/GJBaseGameLayer.hpp>
+
+#include <algorithm>
+#include <cstdint>
+
 using namespace geode::prelude;
 
-/**
- * `$modify` lets you extend and modify GD's classes.
- * To hook a function in Geode, simply $modify the class
- * and write a new function definition with the signature of
- * the function you want to hook.
- *
- * Here we use the overloaded `$modify` macro to set our own class name,
- * so that we can use it for button callbacks.
- *
- * Notice the header being included, you *must* include the header for
- * the class you are modifying, or you will get a compile error.
- *
- * Another way you could do this is like this:
- *
- * struct MyMenuLayer : Modify<MyMenuLayer, MenuLayer> {};
- */
-#include <Geode/modify/MenuLayer.hpp>
-class $modify(MyMenuLayer, MenuLayer) {
-	/**
-	 * Typically classes in GD are initialized using the `init` function, (though not always!),
-	 * so here we use it to add our own button to the bottom menu.
-	 *
-	 * Note that for all hooks, your signature has to *match exactly*,
-	 * `void init()` would not place a hook!
-	*/
-	bool init() {
-		/**
-		 * We call the original init function so that the
-		 * original class is properly initialized.
-		 */
-		if (!MenuLayer::init()) {
-			return false;
-		}
+namespace {
+    constexpr float ACTIVATION_DELAY = 15.0f;
 
-		/**
-		 * You can use methods from the `geode::log` namespace to log messages to the console,
-		 * being useful for debugging and such. See this page for more info about logging:
-		 * https://docs.geode-sdk.org/tutorials/logging
-		*/
-		log::debug("Hello from my MenuLayer::init hook! This layer has {} children.", this->getChildrenCount());
+    bool g_holding = false;
+    bool g_syntheticInput = false;
+    bool g_spamButtonDown = true;
 
-		/**
-		 * See this page for more info about buttons
-		 * https://docs.geode-sdk.org/tutorials/buttons
-		*/
-		auto myButton = CCMenuItemSpriteExtra::create(
-			CCSprite::createWithSpriteFrameName("GJ_likeBtn_001.png"),
-			this,
-			/**
-			 * Here we use the name we set earlier for our modify class.
-			*/
-			menu_selector(MyMenuLayer::onMyButton)
-		);
+    float g_holdTime = 0.0f;
+    float g_tickTimer = 0.0f;
 
-		/**
-		 * Here we access the `bottom-menu` node by its ID, and add our button to it.
-		 * Node IDs are a Geode feature, see this page for more info about it:
-		 * https://docs.geode-sdk.org/tutorials/nodetree
-		*/
-		auto menu = this->getChildByID("bottom-menu");
-		menu->addChild(myButton);
+    int g_button = 0;
+    bool g_player1 = true;
+}
 
-		/**
-		 * The `_spr` string literal operator just prefixes the string with
-		 * your mod id followed by a slash. This is good practice for setting your own node ids.
-		*/
-		myButton->setID("my-button"_spr);
+class $modify(HoldToSpamGameLayer, GJBaseGameLayer) {
+    void handleButton(bool down, int button, bool isPlayer1) {
+        // Synthetic events must not reset the physical hold timer.
+        if (g_syntheticInput) {
+            GJBaseGameLayer::handleButton(down, button, isPlayer1);
+            return;
+        }
 
-		/**
-		 * We update the layout of the menu to ensure that our button is properly placed.
-		 * This is yet another Geode feature, see this page for more info about it:
-		 * https://docs.geode-sdk.org/tutorials/layouts
-		*/
-		menu->updateLayout();
+        if (down) {
+            // Start tracking the first held gameplay input.
+            if (!g_holding) {
+                g_holding = true;
+                g_holdTime = 0.0f;
+                g_tickTimer = 0.0f;
 
-		/**
-		 * We return `true` to indicate that the class was properly initialized.
-		 */
-		return true;
-	}
+                g_button = button;
+                g_player1 = isPlayer1;
+                g_spamButtonDown = true;
+            }
+        } else if (
+            g_holding &&
+            button == g_button &&
+            isPlayer1 == g_player1
+        ) {
+            // Releasing the tracked input immediately resets everything.
+            g_holding = false;
+            g_holdTime = 0.0f;
+            g_tickTimer = 0.0f;
+            g_spamButtonDown = true;
+        }
 
-	/**
-	 * This is the callback function for the button we created earlier.
-	 * The signature for button callbacks must always be the same,
-	 * return type `void` and taking a `CCObject*`.
-	*/
-	void onMyButton(CCObject*) {
-		FLAlertLayer::create("Geode", "Hello from my custom mod!", "OK")->show();
-	}
+        GJBaseGameLayer::handleButton(down, button, isPlayer1);
+    }
+
+    void update(float dt) {
+        GJBaseGameLayer::update(dt);
+
+        if (!g_holding) {
+            return;
+        }
+
+        g_holdTime += dt;
+
+        // Do not automate anything until the full 15 seconds have passed.
+        if (g_holdTime < ACTIVATION_DELAY) {
+            return;
+        }
+
+        auto cps = std::clamp(
+            static_cast<int>(
+                Mod::get()->getSettingValue<int64_t>("cps")
+            ),
+            1,
+            60
+        );
+
+        // One press/release cycle contains two transitions.
+        const float halfInterval = 0.5f / static_cast<float>(cps);
+
+        g_tickTimer += dt;
+
+        if (g_tickTimer < halfInterval) {
+            return;
+        }
+
+        g_tickTimer = 0.0f;
+        g_spamButtonDown = !g_spamButtonDown;
+
+        // Send the synthetic transition without changing the physical hold.
+        g_syntheticInput = true;
+        GJBaseGameLayer::handleButton(
+            g_spamButtonDown,
+            g_button,
+            g_player1
+        );
+        g_syntheticInput = false;
+    }
 };
+
