@@ -8,8 +8,6 @@
 using namespace geode::prelude;
 
 namespace {
-    constexpr float ACTIVATION_DELAY = 15.0f;
-
     bool g_holding = false;
     bool g_syntheticInput = false;
     bool g_spamButtonDown = true;
@@ -23,14 +21,13 @@ namespace {
 
 class $modify(HoldToSpamGameLayer, GJBaseGameLayer) {
     void handleButton(bool down, int button, bool isPlayer1) {
-        // Synthetic events must not reset the physical hold timer.
+        // Let synthetic input pass through without resetting the hold timer.
         if (g_syntheticInput) {
             GJBaseGameLayer::handleButton(down, button, isPlayer1);
             return;
         }
 
         if (down) {
-            // Start tracking the first held gameplay input.
             if (!g_holding) {
                 g_holding = true;
                 g_holdTime = 0.0f;
@@ -45,7 +42,7 @@ class $modify(HoldToSpamGameLayer, GJBaseGameLayer) {
             button == g_button &&
             isPlayer1 == g_player1
         ) {
-            // Releasing the tracked input immediately resets everything.
+            // Releasing the original held input resets the activation timer.
             g_holding = false;
             g_holdTime = 0.0f;
             g_tickTimer = 0.0f;
@@ -64,12 +61,19 @@ class $modify(HoldToSpamGameLayer, GJBaseGameLayer) {
 
         g_holdTime += dt;
 
-        // Do not automate anything until the full 15 seconds have passed.
-        if (g_holdTime < ACTIVATION_DELAY) {
+        const float activationDelay = std::clamp(
+            static_cast<float>(
+                Mod::get()->getSettingValue<double>("hold-duration")
+            ),
+            1.0f,
+            60.0f
+        );
+
+        if (g_holdTime < activationDelay) {
             return;
         }
 
-        auto cps = std::clamp(
+        const int cps = std::clamp(
             static_cast<int>(
                 Mod::get()->getSettingValue<int64_t>("cps")
             ),
@@ -77,7 +81,7 @@ class $modify(HoldToSpamGameLayer, GJBaseGameLayer) {
             60
         );
 
-        // One press/release cycle contains two transitions.
+        // Each complete cycle consists of a press and a release.
         const float halfInterval = 0.5f / static_cast<float>(cps);
 
         g_tickTimer += dt;
@@ -86,10 +90,11 @@ class $modify(HoldToSpamGameLayer, GJBaseGameLayer) {
             return;
         }
 
-        g_tickTimer = 0.0f;
+        // Preserve excess time to reduce timing drift on slower frames.
+        g_tickTimer -= halfInterval;
+
         g_spamButtonDown = !g_spamButtonDown;
 
-        // Send the synthetic transition without changing the physical hold.
         g_syntheticInput = true;
         GJBaseGameLayer::handleButton(
             g_spamButtonDown,
